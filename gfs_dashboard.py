@@ -3,16 +3,38 @@ RSI Multi-Timeframe Scanner Dashboard (Upstox API)
 Setup: pip install -r requirements.txt
 Run:   streamlit run gfs_dashboard.py
 """
+import hmac
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import streamlit as st
 
+def secret(name):
+    """Streamlit secrets ya environment variable se value lo."""
+    try:
+        v = st.secrets.get(name, "")
+    except Exception:
+        v = ""
+    return str(v or os.getenv(name, "")).strip()
+
+
 from scanner_core import DEFAULT_ROW, PRESETS, TIMEFRAMES, analyse, fetch_nifty500, load_universe
 
 # ----------------------------- UI -----------------------------
 st.set_page_config(page_title="RSI Scanner", layout="wide")
+APP_PASSWORD = secret("APP_PASSWORD")
+if APP_PASSWORD and not st.session_state.get("authed"):
+    st.title("RSI Multi-Timeframe Scanner")
+    pw = st.text_input("Password", type="password")
+    if pw:
+        if hmac.compare_digest(pw, APP_PASSWORD):
+            st.session_state["authed"] = True
+            st.rerun()
+        else:
+            st.error("Galat password")
+    st.stop()
+
 st.title("RSI Multi-Timeframe Scanner")
 st.caption("Upstox API | RSI period, timeframe aur range sab badal sakte ho")
 
@@ -38,7 +60,12 @@ def apply_preset():
 
 with st.sidebar:
     st.header("Settings")
-    token = st.text_input("Upstox Access Token", value=os.getenv("UPSTOX_ACCESS_TOKEN", ""), type="password")
+    stored_token = secret("UPSTOX_ACCESS_TOKEN")
+    if stored_token:
+        st.caption("Token secret se load ho gaya")
+        token = st.text_input("Token override (optional)", type="password").strip() or stored_token
+    else:
+        token = st.text_input("Upstox Access Token", type="password").strip()
     period = st.number_input("RSI Period", min_value=2, max_value=100, value=14, step=1)
 
     st.subheader("Stock universe")
@@ -108,6 +135,9 @@ if st.button("Scan chalao", type="primary"):
             except Exception:
                 st.error("CSV padh nahi paye. 'Symbol' column check karo.")
                 st.stop()
+        elif os.path.exists("nifty500.csv"):
+            d = pd.read_csv("nifty500.csv")
+            syms = set(d["Symbol"].astype(str).str.strip().str.upper())
         else:
             syms = st.session_state.get("n500_syms") or fetch_nifty500()
             if syms:

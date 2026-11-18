@@ -1,6 +1,7 @@
 """Core scanning logic (no UI): Upstox data, RSI, universe loaders."""
 import gzip
 import io
+import json
 import time
 from datetime import date, timedelta
 from functools import lru_cache
@@ -135,20 +136,23 @@ NIFTY500_URLS = [
 
 @lru_cache(maxsize=1)
 def load_universe():
-    """NSE EQ stocks + F&O stocks ki identification (stock futures ke underlying se)."""
+    """NSE EQ stocks + F&O stocks (stock futures ke underlying se). Kam memory ke liye json se filter."""
     raw = requests.get(INSTRUMENTS_URL, timeout=60).content
-    df = pd.read_json(io.BytesIO(gzip.decompress(raw)))
-    eq = df[(df["segment"] == "NSE_EQ") & (df["instrument_type"] == "EQ")]
-    eq = eq[["instrument_key", "trading_symbol"]].reset_index(drop=True)
-
-    fno_keys, fno_syms = set(), set()
-    if "segment" in df.columns:
-        fo = df[(df["segment"] == "NSE_FO") & (df["instrument_type"] == "FUT")]
-        if "underlying_key" in fo.columns:
-            keys = set(fo["underlying_key"].dropna().astype(str))
-            fno_keys = {k for k in keys if k.startswith("NSE_EQ")}
-        if "underlying_symbol" in fo.columns:
-            fno_syms = set(fo["underlying_symbol"].dropna().astype(str).str.upper()) - INDEX_UNDERLYINGS
+    data = json.loads(gzip.decompress(raw))
+    eq_rows, fno_keys, fno_syms = [], set(), set()
+    for d in data:
+        seg, typ = d.get("segment"), d.get("instrument_type")
+        if seg == "NSE_EQ" and typ == "EQ":
+            eq_rows.append((d["instrument_key"], d["trading_symbol"]))
+        elif seg == "NSE_FO" and typ == "FUT":
+            uk = str(d.get("underlying_key") or "")
+            if uk.startswith("NSE_EQ"):
+                fno_keys.add(uk)
+            us = str(d.get("underlying_symbol") or "").upper()
+            if us and us not in INDEX_UNDERLYINGS:
+                fno_syms.add(us)
+    del data
+    eq = pd.DataFrame(eq_rows, columns=["instrument_key", "trading_symbol"])
     return eq, fno_keys, fno_syms
 
 
