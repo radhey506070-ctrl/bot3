@@ -1,0 +1,71 @@
+name: RSI scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "Stock universe"
+        type: choice
+        options: [nifty500, fno, all]
+        default: nifty500
+      strategy:
+        description: "Strategy"
+        type: choice
+        options: [both, GFS, AGFS, custom]
+        default: both
+      conditions:
+        description: 'Only for custom, e.g. month=60-100,week=60-100,day=38-43,15minute=30-40'
+        type: string
+        default: ""
+      period:
+        description: "RSI period"
+        type: string
+        default: "14"
+      live:
+        description: "Include today's live candle"
+        type: boolean
+        default: true
+  schedule:
+    # 10:45 UTC = 16:15 IST, Monday to Friday (after market close)
+    - cron: "45 10 * * 1-5"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests pandas
+
+      - name: Run scan
+        env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          IN_UNIVERSE: ${{ inputs.universe || 'nifty500' }}
+          IN_STRATEGY: ${{ inputs.strategy || 'both' }}
+          IN_CONDITIONS: ${{ inputs.conditions || '' }}
+          IN_PERIOD: ${{ inputs.period || '14' }}
+          IN_LIVE: ${{ inputs.live == false && 'false' || 'true' }}
+        run: |
+          python scan_cli.py \
+            --universe "$IN_UNIVERSE" \
+            --strategy "$IN_STRATEGY" \
+            --conditions "$IN_CONDITIONS" \
+            --period "$IN_PERIOD" \
+            --live "$IN_LIVE"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-results
+          path: scan_results.csv
+          if-no-files-found: ignore
